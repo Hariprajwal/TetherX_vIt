@@ -54,3 +54,4 @@ class AnomalyDetectRequestSerializer(serializers.Serializer):
 class BlockchainVerifyRequestSerializer(serializers.Serializer):
     """No input needed — verifies the entire chain."""
     pass
+

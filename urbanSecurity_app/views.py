@@ -4,7 +4,8 @@ import logging
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes as perm_decorator
+from rest_framework.permissions import AllowAny
 
 from .models import AccessLog, AuditLog, ABACPolicy, RoleAdaptation
 from .serializers import (
@@ -13,24 +14,52 @@ from .serializers import (
     AdaptRoleRequestSerializer, AnomalyDetectRequestSerializer,
 )
 from .blockchain import LocalBlockchain
+from .permissions import (
+    get_user_role,
+    AccessLogPermission, AuditLogPermission,
+    ABACPolicyPermission, RoleAdaptationPermission,
+    AIToolPermission,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────
-# CRUD ViewSets (GET, POST, PUT, PATCH, DELETE)
+# CRUD ViewSets with Role-Based Permissions
 # ──────────────────────────────────────────────
 
 class AccessLogViewSet(viewsets.ModelViewSet):
-    """CRUD for Access Logs — tracks every API request with anomaly scores."""
-    queryset = AccessLog.objects.all()
+    """
+    CRUD for Access Logs.
+    - admin/Municipal: see ALL logs
+    - Engineer: see ALL logs, can create, cannot delete
+    - viewer: see only OWN logs (filtered by user_identifier)
+    """
     serializer_class = AccessLogSerializer
+    permission_classes = [AccessLogPermission]
+
+    def get_queryset(self):
+        role = get_user_role(self.request)
+        if role in ('admin', 'municipal', 'engineer'):
+            return AccessLog.objects.all().order_by('-timestamp')
+        # viewer: only their own logs
+        return AccessLog.objects.filter(
+            user_identifier=self.request.user.username
+        ).order_by('-timestamp')
 
 
 class AuditLogViewSet(viewsets.ModelViewSet):
-    """CRUD for Audit Logs — blockchain-integrated tamper-proof trail."""
-    queryset = AuditLog.objects.all()
+    """
+    CRUD for Audit Logs (blockchain-integrated).
+    - admin/Municipal: full access
+    - Engineer: read + create
+    - viewer: read only
+    """
     serializer_class = AuditLogSerializer
+    permission_classes = [AuditLogPermission]
+
+    def get_queryset(self):
+        return AuditLog.objects.all().order_by('-timestamp')
 
     def perform_create(self, serializer):
         """Auto-generate blockchain hash on create."""
@@ -48,30 +77,51 @@ class AuditLogViewSet(viewsets.ModelViewSet):
 
 
 class ABACPolicyViewSet(viewsets.ModelViewSet):
-    """CRUD for ABAC Zero-Trust policies — granular, context-aware rules."""
-    queryset = ABACPolicy.objects.all()
+    """
+    CRUD for ABAC Zero-Trust policies.
+    - admin: FULL access (create, edit, delete)
+    - Municipal: read + create + edit (no delete)
+    - Engineer/viewer: READ ONLY
+    """
+    queryset = ABACPolicy.objects.all().order_by('-priority')
     serializer_class = ABACPolicySerializer
+    permission_classes = [ABACPolicyPermission]
 
 
 class RoleAdaptationViewSet(viewsets.ModelViewSet):
-    """CRUD for MAS Role Adaptations — records AI-driven role changes."""
-    queryset = RoleAdaptation.objects.all()
+    """
+    CRUD for MAS Role Adaptations.
+    - admin/Municipal: see ALL
+    - Engineer: see ALL (read only)
+    - viewer: see OWN only (read only)
+    """
     serializer_class = RoleAdaptationSerializer
+    permission_classes = [RoleAdaptationPermission]
+
+    def get_queryset(self):
+        role = get_user_role(self.request)
+        if role in ('admin', 'municipal', 'engineer'):
+            return RoleAdaptation.objects.all().order_by('-timestamp')
+        # viewer: only their own
+        return RoleAdaptation.objects.filter(
+            user_identifier=self.request.user.username
+        ).order_by('-timestamp')
 
 
 # ──────────────────────────────────────────────
-# Custom Action Endpoints
+# Custom Action Endpoints (AI-powered)
 # ──────────────────────────────────────────────
 
 class AdaptRoleView(APIView):
     """
     POST: Predict optimal role using edge ML (LSTM) or local fallback.
-    Sends context vector to Flask edge node; falls back to local inference.
+    - admin/Municipal/Engineer: can POST
+    - viewer: can only GET (see info)
     """
-    serializer_class = AdaptRoleRequestSerializer  # For DRF browsable API form
+    serializer_class = AdaptRoleRequestSerializer
+    permission_classes = [AIToolPermission]
 
     def get(self, request):
-        """Display usage info in the browsable API."""
         return Response({
             "info": "POST a context vector to get AI-recommended role",
             "example_body": {
@@ -85,7 +135,9 @@ class AdaptRoleView(APIView):
                 "location_risk (0-1)",
                 "access_frequency (0-1)",
                 "credential_strength (0-1)"
-            ]
+            ],
+            "your_role": get_user_role(request),
+            "can_post": get_user_role(request) in ('admin', 'municipal', 'engineer'),
         })
 
     def post(self, request):
@@ -94,14 +146,13 @@ class AdaptRoleView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         context = serializer.validated_data['context']
-        user_id = serializer.validated_data.get('user_identifier', 'anonymous')
-        current_role = serializer.validated_data.get('current_role', 'viewer')
+        user_id = serializer.validated_data.get('user_identifier', request.user.username)
+        current_role = serializer.validated_data.get('current_role', get_user_role(request))
 
         recommended_role = None
         from_edge = False
 
         try:
-            # Try edge node first (low-latency simulation)
             edge_url = "http://localhost:5001/edge-predict"
             resp = requests.post(edge_url, json={"context": context}, timeout=2)
             resp.raise_for_status()
@@ -110,7 +161,6 @@ class AdaptRoleView(APIView):
             from_edge = True
             edge_status = edge_data.get("status")
         except Exception:
-            # Fallback to local prediction
             try:
                 from .utils.RoleLSTM import RolePredictor
                 recommended_role = RolePredictor.predict(context)
@@ -121,7 +171,6 @@ class AdaptRoleView(APIView):
                 recommended_role = "normal"
                 edge_status = f"fallback_default: {str(e)}"
 
-        # Record the adaptation
         RoleAdaptation.objects.create(
             user_identifier=user_id,
             old_role=current_role,
@@ -132,7 +181,6 @@ class AdaptRoleView(APIView):
             from_edge=from_edge,
         )
 
-        # Log to blockchain
         LocalBlockchain.add_block(
             f"role_adapt|{user_id}|{current_role}→{recommended_role}"
         )
@@ -148,10 +196,12 @@ class AdaptRoleView(APIView):
 
 class AnomalyDetectView(APIView):
     """
-    POST: Run anomaly detection using the Autoencoder DL model.
-    Returns anomaly score and whether the input is flagged as anomalous.
+    POST: Run anomaly detection using the Autoencoder.
+    - admin/Municipal/Engineer: can POST
+    - viewer: GET only
     """
     serializer_class = AnomalyDetectRequestSerializer
+    permission_classes = [AIToolPermission]
 
     def get(self, request):
         return Response({
@@ -159,7 +209,9 @@ class AnomalyDetectView(APIView):
             "example_body": {
                 "input_vector": [0.8, 0.3, 1.0, 0.5, 0.2],
                 "user_identifier": "sensor_42"
-            }
+            },
+            "your_role": get_user_role(request),
+            "can_post": get_user_role(request) in ('admin', 'municipal', 'engineer'),
         })
 
     def post(self, request):
@@ -168,19 +220,18 @@ class AnomalyDetectView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         input_vector = serializer.validated_data['input_vector']
-        user_id = serializer.validated_data.get('user_identifier', 'anonymous')
+        user_id = serializer.validated_data.get('user_identifier', request.user.username)
 
         try:
             from .utils.RoleLSTM import AnomalyDetector
             detector = AnomalyDetector()
             is_anomalous = detector.detect(input_vector)
-            anomaly_score = 0.85 if is_anomalous else 0.05  # Simplified score
+            anomaly_score = 0.85 if is_anomalous else 0.05
         except Exception as e:
             logger.warning(f"Anomaly detection model unavailable: {e}")
             is_anomalous = False
             anomaly_score = 0.0
 
-        # Record access log
         AccessLog.objects.create(
             user_identifier=user_id,
             endpoint='/api/anomaly-detect/',
@@ -199,9 +250,8 @@ class AnomalyDetectView(APIView):
 
 
 class BlockchainVerifyView(APIView):
-    """
-    GET/POST: Verify integrity of the entire blockchain audit trail.
-    """
+    """GET/POST: Verify blockchain. All authenticated users can verify."""
+    permission_classes = [AIToolPermission]
 
     def get(self, request):
         chain = LocalBlockchain.get_chain()
@@ -209,8 +259,8 @@ class BlockchainVerifyView(APIView):
         return Response({
             "chain_length": len(chain),
             "is_valid": is_valid,
-            "chain": chain[-10:],  # Last 10 blocks
-            "info": "POST to this endpoint to run a full verification"
+            "chain": chain[-10:],
+            "info": "POST to run a full verification"
         })
 
     def post(self, request):
@@ -229,12 +279,15 @@ class BlockchainVerifyView(APIView):
 # ──────────────────────────────────────────────
 
 @api_view(['GET'])
+@perm_decorator([AllowAny])
 def api_root(request):
     """UrbanSecure AI-ZeroTrust — API Overview."""
     from rest_framework.reverse import reverse
+    user_role = get_user_role(request) if request.user.is_authenticated else 'anonymous'
     return Response({
         "project": "UrbanSecure AI-ZeroTrust",
         "description": "AI-Enhanced Zero-Trust Security Layer with Blockchain-Integrated Logging",
+        "your_role": user_role,
         "endpoints": {
             "access_logs": reverse('accesslog-list', request=request),
             "audit_logs": reverse('auditlog-list', request=request),
@@ -244,11 +297,10 @@ def api_root(request):
             "anomaly_detect": reverse('anomaly-detect', request=request),
             "blockchain_verify": reverse('blockchain-verify', request=request),
         },
-        "components": [
-            "Multi-Agent Systems (MAS) — Dynamic Role Management",
-            "Deep Learning (DL) — Real-Time Anomaly Detection",
-            "Blockchain — Tamper-Proof Audit Logs",
-            "ABAC + Zero-Trust — Granular Context-Aware Restrictions",
-            "Edge Computing — Low-Latency Decisions",
-        ]
+        "role_permissions": {
+            "admin": "Full access to all resources",
+            "Municipal": "Read/write most resources, cannot delete policies",
+            "Engineer": "Read access, AI tools, cannot manage policies",
+            "viewer": "Read-only access to own data only",
+        }
     })
