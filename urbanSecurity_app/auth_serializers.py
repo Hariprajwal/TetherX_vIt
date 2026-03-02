@@ -1,14 +1,17 @@
 # urbanSecurity_app/auth_serializers.py
 import re
 from rest_framework import serializers
-from django.contrib.auth.models import User
-from django.contrib.auth.password_validation import validate_password
+from .models import User
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    """Register with roles: viewer, Engineer, Municipal (NO admin)."""
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
-    role = serializers.CharField(max_length=100, default='viewer', required=False)
+    role = serializers.ChoiceField(
+        choices=[('viewer', 'Viewer'), ('Engineer', 'Engineer'), ('Municipal', 'Municipal')],
+        default='viewer',
+    )
     email = serializers.EmailField(required=True)
 
     class Meta:
@@ -30,7 +33,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate_password(self, value):
-        # Strength checks
         if len(value) < 8:
             raise serializers.ValidationError("Password must be at least 8 characters.")
         if not re.search(r'[A-Z]', value):
@@ -46,6 +48,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data.get('password') != data.get('password_confirm'):
             raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
+        # Block admin role
+        if data.get('role', '').lower() == 'admin':
+            raise serializers.ValidationError({"role": "Admin role cannot be registered."})
         return data
 
     def create(self, validated_data):
@@ -55,9 +60,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
+            role=role,
+            is_verified=False,
         )
-        user.first_name = role
-        user.save()
+        user.generate_code()  # Generate OTP
         return user
 
 
@@ -66,10 +72,10 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'date_joined', 'last_login']
+        fields = ['id', 'username', 'email', 'role', 'is_verified', 'date_joined', 'last_login']
 
     def get_role(self, obj):
-        return obj.first_name or 'viewer'
+        return obj.get_effective_role()
 
 
 class PasswordChangeSerializer(serializers.Serializer):

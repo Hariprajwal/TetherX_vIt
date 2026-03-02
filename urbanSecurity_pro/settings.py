@@ -40,9 +40,22 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
     'urbanSecurity_app',
 ]
+
+# Custom User Model
+AUTH_USER_MODEL = 'urbanSecurity_app.User'
+
+# Gmail SMTP for OTP emails
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_HOST_USER = 'thirumaleshk549@gmail.com'
+EMAIL_HOST_PASSWORD = 'acef uphw atvx delh'
+DEFAULT_FROM_EMAIL = 'thirumaleshk549@gmail.com'
 
 
 # DRF settings — JWT Auth + Browsable API

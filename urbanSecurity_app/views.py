@@ -26,14 +26,16 @@ logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
 # CRUD ViewSets with Role-Based Permissions
+# Data is segregated per-user via owner FK
 # ──────────────────────────────────────────────
 
 class AccessLogViewSet(viewsets.ModelViewSet):
     """
-    CRUD for Access Logs.
-    - admin/Municipal: see ALL logs
+    Access Logs — per-user data segregation.
+    - admin: see ALL logs from ALL users
+    - Municipal: see ALL logs
     - Engineer: see ALL logs, can create, cannot delete
-    - viewer: see only OWN logs (filtered by user_identifier)
+    - viewer: see only OWN logs
     """
     serializer_class = AccessLogSerializer
     permission_classes = [AccessLogPermission]
@@ -42,33 +44,43 @@ class AccessLogViewSet(viewsets.ModelViewSet):
         role = get_user_role(self.request)
         if role in ('admin', 'municipal', 'engineer'):
             return AccessLog.objects.all().order_by('-timestamp')
-        # viewer: only their own logs
+        # viewer: only their own logs (via owner FK)
         return AccessLog.objects.filter(
-            user_identifier=self.request.user.username
+            owner=self.request.user
         ).order_by('-timestamp')
+
+    def perform_create(self, serializer):
+        """Auto-assign owner to the current user."""
+        serializer.save(owner=self.request.user)
 
 
 class AuditLogViewSet(viewsets.ModelViewSet):
     """
-    CRUD for Audit Logs (blockchain-integrated).
-    - admin/Municipal: full access
-    - Engineer: read + create
-    - viewer: read only
+    Audit Logs — blockchain-integrated, per-user segregation.
+    - admin/Municipal: see ALL, full CRUD
+    - Engineer: see ALL, read + create
+    - viewer: see only OWN
     """
     serializer_class = AuditLogSerializer
     permission_classes = [AuditLogPermission]
 
     def get_queryset(self):
-        return AuditLog.objects.all().order_by('-timestamp')
+        role = get_user_role(self.request)
+        if role in ('admin', 'municipal', 'engineer'):
+            return AuditLog.objects.all().order_by('-timestamp')
+        return AuditLog.objects.filter(
+            owner=self.request.user
+        ).order_by('-timestamp')
 
     def perform_create(self, serializer):
-        """Auto-generate blockchain hash on create."""
+        """Auto-generate blockchain hash on create + assign owner."""
         action = serializer.validated_data.get('action', '')
         actor = serializer.validated_data.get('actor', 'system')
         details = serializer.validated_data.get('details', '')
         data_str = f"{action}|{actor}|{details}"
         block = LocalBlockchain.add_block(data_str)
         serializer.save(
+            owner=self.request.user,
             block_hash=block['hash'],
             prev_hash=block['prev_hash'],
             block_index=block['index'],
@@ -78,8 +90,8 @@ class AuditLogViewSet(viewsets.ModelViewSet):
 
 class ABACPolicyViewSet(viewsets.ModelViewSet):
     """
-    CRUD for ABAC Zero-Trust policies.
-    - admin: FULL access (create, edit, delete)
+    ABAC Zero-Trust policies.
+    - admin: FULL (create, edit, delete)
     - Municipal: read + create + edit (no delete)
     - Engineer/viewer: READ ONLY
     """
@@ -90,10 +102,10 @@ class ABACPolicyViewSet(viewsets.ModelViewSet):
 
 class RoleAdaptationViewSet(viewsets.ModelViewSet):
     """
-    CRUD for MAS Role Adaptations.
+    Role Adaptations — per-user segregation.
     - admin/Municipal: see ALL
     - Engineer: see ALL (read only)
-    - viewer: see OWN only (read only)
+    - viewer: see OWN only
     """
     serializer_class = RoleAdaptationSerializer
     permission_classes = [RoleAdaptationPermission]
@@ -102,22 +114,16 @@ class RoleAdaptationViewSet(viewsets.ModelViewSet):
         role = get_user_role(self.request)
         if role in ('admin', 'municipal', 'engineer'):
             return RoleAdaptation.objects.all().order_by('-timestamp')
-        # viewer: only their own
         return RoleAdaptation.objects.filter(
-            user_identifier=self.request.user.username
+            owner=self.request.user
         ).order_by('-timestamp')
 
 
 # ──────────────────────────────────────────────
-# Custom Action Endpoints (AI-powered)
+# AI Endpoints
 # ──────────────────────────────────────────────
 
 class AdaptRoleView(APIView):
-    """
-    POST: Predict optimal role using edge ML (LSTM) or local fallback.
-    - admin/Municipal/Engineer: can POST
-    - viewer: can only GET (see info)
-    """
     serializer_class = AdaptRoleRequestSerializer
     permission_classes = [AIToolPermission]
 
@@ -137,7 +143,6 @@ class AdaptRoleView(APIView):
                 "credential_strength (0-1)"
             ],
             "your_role": get_user_role(request),
-            "can_post": get_user_role(request) in ('admin', 'municipal', 'engineer'),
         })
 
     def post(self, request):
@@ -172,6 +177,7 @@ class AdaptRoleView(APIView):
                 edge_status = f"fallback_default: {str(e)}"
 
         RoleAdaptation.objects.create(
+            owner=request.user,
             user_identifier=user_id,
             old_role=current_role,
             new_role=recommended_role,
@@ -195,11 +201,6 @@ class AdaptRoleView(APIView):
 
 
 class AnomalyDetectView(APIView):
-    """
-    POST: Run anomaly detection using the Autoencoder.
-    - admin/Municipal/Engineer: can POST
-    - viewer: GET only
-    """
     serializer_class = AnomalyDetectRequestSerializer
     permission_classes = [AIToolPermission]
 
@@ -211,7 +212,6 @@ class AnomalyDetectView(APIView):
                 "user_identifier": "sensor_42"
             },
             "your_role": get_user_role(request),
-            "can_post": get_user_role(request) in ('admin', 'municipal', 'engineer'),
         })
 
     def post(self, request):
@@ -233,6 +233,7 @@ class AnomalyDetectView(APIView):
             anomaly_score = 0.0
 
         AccessLog.objects.create(
+            owner=request.user,
             user_identifier=user_id,
             endpoint='/api/anomaly-detect/',
             method='POST',
@@ -250,7 +251,6 @@ class AnomalyDetectView(APIView):
 
 
 class BlockchainVerifyView(APIView):
-    """GET/POST: Verify blockchain. All authenticated users can verify."""
     permission_classes = [AIToolPermission]
 
     def get(self, request):
@@ -260,7 +260,6 @@ class BlockchainVerifyView(APIView):
             "chain_length": len(chain),
             "is_valid": is_valid,
             "chain": chain[-10:],
-            "info": "POST to run a full verification"
         })
 
     def post(self, request):
@@ -275,18 +274,16 @@ class BlockchainVerifyView(APIView):
 
 
 # ──────────────────────────────────────────────
-# API Root Info
+# API Root
 # ──────────────────────────────────────────────
 
 @api_view(['GET'])
 @perm_decorator([AllowAny])
 def api_root(request):
-    """UrbanSecure AI-ZeroTrust — API Overview."""
     from rest_framework.reverse import reverse
     user_role = get_user_role(request) if request.user.is_authenticated else 'anonymous'
     return Response({
         "project": "UrbanSecure AI-ZeroTrust",
-        "description": "AI-Enhanced Zero-Trust Security Layer with Blockchain-Integrated Logging",
         "your_role": user_role,
         "endpoints": {
             "access_logs": reverse('accesslog-list', request=request),
@@ -297,10 +294,4 @@ def api_root(request):
             "anomaly_detect": reverse('anomaly-detect', request=request),
             "blockchain_verify": reverse('blockchain-verify', request=request),
         },
-        "role_permissions": {
-            "admin": "Full access to all resources",
-            "Municipal": "Read/write most resources, cannot delete policies",
-            "Engineer": "Read access, AI tools, cannot manage policies",
-            "viewer": "Read-only access to own data only",
-        }
     })
