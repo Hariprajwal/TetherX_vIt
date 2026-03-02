@@ -1,0 +1,138 @@
+/* ═══════════════════════════════════════════════════════════ */
+/*  UrbanSecure AI-ZeroTrust — index.css                      */
+/*  Design System: AWS-inspired professional theme            */
+/*  Colors: #003D5B #F1F5F8 #F9AC00 #2A7D8F #C0C0C0          */
+/* ═══════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─── LIGHT THEME (default) ─── */
+:root {
+  --navy: #003D5B;
+  --navy-light: #0a4f72;
+  --navy-dark: #002a3f;
+  --cloud: #F1F5F8;
+  --amber: #F9AC00;
+  --amber-hover: #e69d00;
+  --teal: #2A7D8F;
+  --teal-light: #34919f;
+  --silver: #C0C0C0;
+
+  --bg-body: #F1F5F8;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8fafc;
+  --bg-sidebar: #ffffff;
+  --bg-header: #003D5B;
+  --bg-input: #ffffff;
+  --bg-input-hover: #f8fafc;
+  --bg-table-head: #f1f5f8;
+  --bg-table-stripe: #fafbfc;
+
+  --border-color: #e2e8f0;
+  --border-focus: #2A7D8F;
+
+  --text-primary: #1a202c;
+  --text-secondary: #4a5568;
+  --text-muted: #a0aec0;
+  --text-on-navy: #ffffff;
+  --text-on-amber: #1a202c;
+  --text-link: #2A7D8F;
+
+  --accent-green: #38a169;
+  --accent-red: #e53e3e;
+  --accent-orange: #dd6b20;
+  --accent-blue: #3182ce;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.1);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  --transition: 0.15s ease;
+}
+
+/* ─── DARK THEME ─── */
+[data-theme="dark"] {
+  --bg-body: #0d1117;
+  --bg-card: #161b22;
+  --bg-card-hover: #1c2333;
+  --bg-sidebar: #0d1117;
+  --bg-header: #0d1117;
+  --bg-input: #1c2333;
+  --bg-input-hover: #252d3a;
+  --bg-table-head: #161b22;
+  --bg-table-stripe: #1c2333;
+
+  --border-color: #30363d;
+  --border-focus: #F9AC00;
+
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-on-navy: #e6edf3;
+  --text-link: #58a6ff;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* ─── GLOBAL ─── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  background: var(--bg-body);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+code,
+pre {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 0.85em;
+}
+
+a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+::selection {
+  background: var(--teal);
+  color: white;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--silver);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
