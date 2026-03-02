@@ -1,0 +1,1 @@
+web: gunicorn urbanSecurity_pro.wsgi:application
